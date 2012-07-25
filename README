@@ -1,0 +1,27 @@
+The sample code for accessing the beaglebone's hardware 
+
+
+### ccs_bare_gcc_arm_asm_serial
+
+Print hello arm on the serial 
+### ccs_bone_leds
+Binary clock on the 4 leds of the beagle
+
+### ccs_bone_mmc
+Read and write to the MMC
+
+### ccs_bone_uart
+Sample "C" program to print to the UART
+
+
+## The future
+
+Idealy I would like to merge this code with the turorial found here
+http://www.bravegnu.org/gnu-eprog/ to have a nice little standalone
+turorial for developing arm using the the beaglebone as example.
+
+
+You can also have a look at
+* StarterWare:http://processors.wiki.ti.com/index.php/StarterWare  (TI licensed can only use on their hardware)
+* u-boot (GPL)  If you like that
+* Linux If you just want things to work 
