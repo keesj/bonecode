@@ -5,6 +5,13 @@
 #include <stdio.h>
 #include <inttypes.h>
 
+#include <limits.h>
+#include <assert.h>
+
+#include "sdmmcreg.h"
+#include "sdhcreg.h"
+#include "sd.h"
+
 #define MMCHS0_REG_BASE 0x48060000
 
 #define MMCHS_SD_SYSCONFIG 0x110 /* SD system configuration */
@@ -63,15 +70,20 @@
 
 #define MMCHS_SD_CMD_INDX                 (0x3f << 24) /* Command index */
 #define MMCHS_SD_CMD_INDX_CMD(x)          (x << 24)    /* MMC command index binary encoded values from 0 to 63 */
+
+#if 0
 #define MMCHS_SD_CMD_CMD0 MMCHS_SD_CMD_INDX_CMD(0)     /* GO_IDLE_STATE */
 #define MMCHS_SD_CMD_CMD2 MMCHS_SD_CMD_INDX_CMD(2)     /* ALL_SEND_CID */
 #define MMCHS_SD_CMD_CMD3 MMCHS_SD_CMD_INDX_CMD(3)     /* SEND_RELATIVE_ADDR */
 #define MMCHS_SD_CMD_CMD7 MMCHS_SD_CMD_INDX_CMD(7)     /* (D)SELECT_CARD */
 #define MMCHS_SD_CMD_CMD8 MMCHS_SD_CMD_INDX_CMD(8)     /* SEND_IF_COND */
 #define MMCHS_SD_CMD_CMD9 MMCHS_SD_CMD_INDX_CMD(9)     /* SEND_CSD */
+#define MMCHS_SD_CMD_CMD55 MMCHS_SD_CMD_INDX_CMD(55)     /* Next command is application specific */
+#endif
+
 #define MMCHS_SD_CMD_CMD17 MMCHS_SD_CMD_INDX_CMD(17)     /* READ_SINGLE_BLOCK */
 #define MMCHS_SD_CMD_CMD24 MMCHS_SD_CMD_INDX_CMD(24)     /* WRITE_SINGLE_BLOCK */
-#define MMCHS_SD_CMD_CMD55 MMCHS_SD_CMD_INDX_CMD(55)     /* Next command is application specific */
+
 
 #define MMCHS_SD_CMD_ACMD41 MMCHS_SD_CMD_INDX_CMD(41)     /*Send host capacity support */
 #define SD_SEND_OP_COND MMCHS_SD_CMD_ACMD41               /* alias for ACMD41 */
@@ -193,24 +205,12 @@
 #define REG(x)(*((volatile uint32_t *)(x)))
 #define BIT(x)(0x1 << x)
 
-struct sd_card
-{
-	uint32_t cid[4]; /* Card Identification */
-	uint32_t rca; /* Relative card address */
-	uint32_t dsr; /* Driver stage register */
-	uint32_t csd[4]; /* Card specific data */
-	uint32_t scr[2]; /* SD configuration */
-	uint32_t ocr; /* Operation conditions */
-	uint32_t ssr[5]; /* SD Status */
-	uint32_t csr; /* Card status */
-};
-
 /**
  * Write a uint32_t value to a memory address
  */
 inline void write32(uint32_t address, uint32_t value)
 {
-	REG(address)= value;
+	REG(address) = value;
 }
 
 /**
@@ -227,9 +227,9 @@ inline uint32_t read32(uint32_t address)
 inline void set32(uint32_t address, uint32_t mask, uint32_t value)
 {
 	uint32_t val;
-	val= read32(address);
-	val&= ~(mask); /* clear the bits */
-	val|= (value & mask); /* apply the value using the mask */
+	val = read32(address);
+	val &= ~(mask); /* clear the bits */
+	val |= (value & mask); /* apply the value using the mask */
 	write32(address, val);
 }
 
@@ -237,7 +237,7 @@ int mmchs_init()
 {
 
 	int counter;
-	counter= 0;
+	counter = 0;
 
 	/*
 	 * Soft reset of the controller
@@ -367,7 +367,7 @@ int mmchs_init()
 
 int send_cmd(uint32_t command, uint32_t arg)
 {
-	int count= 0;
+	int count = 0;
 
 	/* Read current interrupt status and fail it an interrupt is already asserted */
 	if ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT) & 0xffffu)) {
@@ -411,9 +411,53 @@ int send_cmd(uint32_t command, uint32_t arg)
 	return 0;
 }
 
+int send_cmd_new(struct mmc_command *c)
+{
+
+	/* convert the command to a hsmmc command */
+	int ret;
+	uint32_t cmd, arg;
+	cmd = MMCHS_SD_CMD_INDX_CMD(c->cmd);
+	arg = c->args;
+
+	switch (c->resp_type) {
+		case RESP_LEN_48_CHK_BUSY:
+			cmd |= MMCHS_SD_CMD_RSP_TYPE_48B_BUSY;
+			break;
+		case RESP_LEN_48:
+			cmd |= MMCHS_SD_CMD_RSP_TYPE_48B;
+			break;
+		case RESP_LEN_136:
+			cmd |= MMCHS_SD_CMD_RSP_TYPE_136B;
+			break;
+		case NO_RESPONSE:
+			cmd |= MMCHS_SD_CMD_RSP_TYPE_NO_RESP;
+			break;
+		default:
+			return 1;
+	}
+
+	ret = send_cmd(cmd, arg);
+
+	/* copy response into cmd->resp we don't really
+	 * care at this stage about the response lenght
+	 * or if there was a response at all
+	 */
+	c->resp[3] = read32(MMCHS0_REG_BASE + MMCHS_SD_RSP10);
+	c->resp[2] = read32(MMCHS0_REG_BASE + MMCHS_SD_RSP32);
+	c->resp[1] = read32(MMCHS0_REG_BASE + MMCHS_SD_RSP54);
+	c->resp[0] = read32(MMCHS0_REG_BASE + MMCHS_SD_RSP76);
+	return ret;
+}
+
+static struct mmc_command command;
 int card_goto_idle_state()
 {
-	if (send_cmd(0x00, 0x00)) {
+	command.cmd = MMC_GO_IDLE_STATE;
+	command.resp_type = NO_RESPONSE;
+	command.args = 0x00;
+	if (send_cmd_new(&command)) {
+		// Failure
 		return 1;
 	}
 	return 0;
@@ -421,54 +465,69 @@ int card_goto_idle_state()
 
 int card_identification()
 {
-	uint32_t value;
+	command.cmd = MMC_SEND_EXT_CSD;
+	command.resp_type = RESP_LEN_48;
+	command.args = MMCHS_SD_ARG_CMD8_VHS | MMCHS_SD_ARG_CMD8_CHECK_PATTERN;
 
-	if (send_cmd(MMCHS_SD_CMD_CMD8 | MMCHS_SD_CMD_RSP_TYPE_48B,
-			MMCHS_SD_ARG_CMD8_VHS | MMCHS_SD_ARG_CMD8_CHECK_PATTERN)) {
+	if (send_cmd_new(&command)) {
 		// We currently only support 2.0,
 		return 1;
 	}
 
-	/* Check the pattern and CRC */
-	value= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP10);
-	if (!(value == (MMCHS_SD_ARG_CMD8_VHS | MMCHS_SD_ARG_CMD8_CHECK_PATTERN))) {
+	if (!(command.resp[3]
+			== (MMCHS_SD_ARG_CMD8_VHS | MMCHS_SD_ARG_CMD8_CHECK_PATTERN))) {
 		printf("%s, check pattern check failed  %x\n", __FUNCTION__);
 		return 1;
 	}
+
 	return 0;
 }
 
 int card_query_voltage_and_type(struct sd_card * card)
 {
-	uint32_t value;
 
-	if (send_cmd(MMCHS_SD_CMD_CMD55 | MMCHS_SD_CMD_RSP_TYPE_48B, 0)) { /* RCA=0000 */
+	command.cmd = MMC_APP_CMD;
+	command.resp_type = RESP_LEN_48;
+	command.args = 0x0; /* RCA=0000 */
+	if (send_cmd_new(&command)) {
 		return 1;
 	}
-	/* Send ADMD41 */
+
+	command.cmd = SD_APP_OP_COND;
+	command.resp_type = RESP_LEN_48;
+
 	/* 0x1 << 30 == send HCS (Host capacity support) and get OCR register */
-	if (send_cmd(SD_SEND_OP_COND | MMCHS_SD_CMD_RSP_TYPE_48B,
-			(0x3F << 15) | (0x1 << 30))) {
+	command.args = (0x3F << 15) | (0x1 << 30); /* RCA=0000 */
+	if (send_cmd_new(&command)) {
 		return 1;
 	}
 
 	while (1) {		//@TODO wait for max 1
-		if (send_cmd(MMCHS_SD_CMD_CMD55 | MMCHS_SD_CMD_RSP_TYPE_48B, 0)) { /* RCA=0000 */
-			return 1;
-		}
-		/* Send ADMD41 */
-		/* 0x1 << 30 == send HCS (Host capacity support) and get OCR register */
-		if (send_cmd(SD_SEND_OP_COND | MMCHS_SD_CMD_RSP_TYPE_48B,
-				(0x1FF << 15) | (0x1 << 30))) {
+		command.cmd = MMC_APP_CMD;
+		command.resp_type = RESP_LEN_48;
+		command.args = 0x0; /* RCA=0000 */
+		if (send_cmd_new(&command)) {
 			return 1;
 		}
 
-		value= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP10);
-		if ((value & (0x1u << 31))) {
+
+		/* Send ADMD41 */
+		/* 0x1 << 30 == send HCS (Host capacity support) and get OCR register */
+		command.cmd = SD_APP_OP_COND;
+		command.resp_type = RESP_LEN_48;
+		/* 0x1 << 30 == send HCS (Host capacity support) */
+		command.args = (0x1FF << 15) | (0x1 << 30);
+		if (send_cmd_new(&command)) {
+			return 1;
+		}
+
+		/* if bit 31 is set the response is valid */
+		if ((command.resp[3] & (0x1u << 31))) {
 			break;
 		}
+
 	}
-	card->ocr= value;
+	card->ocr = command.resp[3];
 	return 0;
 }
 
@@ -476,20 +535,30 @@ int card_identify(struct sd_card * card)
 {
 
 	/* Send cmd 2 (all_send_cid) and expect 136 bits response*/
-	if (send_cmd(MMCHS_SD_CMD_CMD2 | MMCHS_SD_CMD_RSP_TYPE_136B, 0)) {
+	command.cmd = MMC_ALL_SEND_CID;
+	command.resp_type = RESP_LEN_136;
+	command.args = 0x0; /* RCA=0000 */
+
+	if (send_cmd_new(&command)) {
 		return 1;
 	}
 
-	card->cid[0]= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP10);
-	card->cid[1]= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP32);
-	card->cid[2]= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP54);
-	card->cid[3]= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP76);
+	card->cid[0] = command.resp[3];
+	card->cid[1] = command.resp[2];
+	card->cid[2] = command.resp[1];
+	card->cid[3] = command.resp[0];
+
+
+	command.cmd = MMC_SET_RELATIVE_ADDR;
+	command.resp_type = RESP_LEN_48;
+	command.args = 0x0; /* RCA=0000 */
 
 	/* R6 response */
-	if (send_cmd(MMCHS_SD_CMD_CMD3 | MMCHS_SD_CMD_RSP_TYPE_48B, 0)) {
+	if (send_cmd_new(&command)) {
 		return 1;
 	}
-	card->rca= (read32(MMCHS0_REG_BASE + MMCHS_SD_RSP10) & 0xffff0000u) >> 16;
+
+	card->rca = (command.resp[3] & 0xffff0000u) >> 16;
 
 	/* MMHCS only supports a single card so sending MMCHS_SD_CMD_CMD2 is useless
 	 * Still we should make it possible in the API to support multiple cards
@@ -501,32 +570,46 @@ int card_identify(struct sd_card * card)
 int card_csd(struct sd_card *card)
 {
 	/* send_csd -> r2 response */
-	if (send_cmd(MMCHS_SD_CMD_CMD9 | MMCHS_SD_CMD_RSP_TYPE_136B,
-			(card->rca << 16))) {
+	command.cmd = MMC_SEND_CSD;
+	command.resp_type = RESP_LEN_136;
+	command.args =(card->rca << 16); /* card rca */
+
+	if (send_cmd_new(&command)) {
 		return 1;
 	}
-	card->csd[0]= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP10);
-	card->csd[1]= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP32);
-	card->csd[2]= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP54);
-	card->csd[3]= read32(MMCHS0_REG_BASE + MMCHS_SD_RSP76);
+
+	card->csd[0] = command.resp[0];
+	card->csd[1] = command.resp[1];
+	card->csd[2] = command.resp[2];
+	card->csd[3] = command.resp[3];
 
 	/* sanity check */
-	if (((card->csd[3] >> 30) & 0x3) != 0x1) {
+	if (((card->csd[0] >> 30) & 0x3) != 0x1) {
 		printf("Version 2.0 of CSD register expected\n");
 		return 1;
 	}
-	long c_size= (card->csd[1] >> 16) | ((card->csd[2] & 0x3F) << 16);
-	printf("size = %lu\n", (c_size + 1) * 512 * 1024);
+	long c_size = (card->csd[2] >> 16) | ((card->csd[1] & 0x3F) << 16);
+	printf("size = %lu bytes\n", (c_size + 1) * 512 * 1024);
 	return 0;
 }
 
 int select_card(struct sd_card *card)
 {
+
+	command.cmd = MMC_SELECT_CARD;
+	command.resp_type = RESP_LEN_48_CHK_BUSY;
+	command.args =(card->rca << 16); /* card rca */
+
+	if (send_cmd_new(&command)) {
+		return 1;
+	}
+#if 0
 	/* select card */
 	if (send_cmd(MMCHS_SD_CMD_CMD7 | MMCHS_SD_CMD_RSP_TYPE_48B_BUSY,
 			(card->rca << 16))) {
 		return 1;
 	}
+#endif
 	return 0;
 }
 
@@ -535,7 +618,7 @@ int read_single_block(struct sd_card *card, uint32_t blknr, unsigned char * buf)
 	uint32_t count;
 	uint32_t value;
 
-	count= 0;
+	count = 0;
 
 	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_BRR_ENABLE,
 			MMCHS_SD_IE_BRR_ENABLE_ENABLE);
@@ -560,12 +643,12 @@ int read_single_block(struct sd_card *card, uint32_t blknr, unsigned char * buf)
 		return 1; /* We are not allowed to read data from the data buffer */
 	}
 
-	for (count= 0; count < 512; count+= 4) {
-		value= read32(MMCHS0_REG_BASE + MMCHS_SD_DATA);
-		buf[count]= *((char*) &value);
-		buf[count + 1]= *((char*) &value + 1);
-		buf[count + 2]= *((char*) &value + 2);
-		buf[count + 3]= *((char*) &value + 3);
+	for (count = 0; count < 512; count += 4) {
+		value = read32(MMCHS0_REG_BASE + MMCHS_SD_DATA);
+		buf[count] = *((char*) &value);
+		buf[count + 1] = *((char*) &value + 1);
+		buf[count + 2] = *((char*) &value + 2);
+		buf[count + 3] = *((char*) &value + 3);
 	}
 
 	/* Wait for TC */
@@ -590,7 +673,7 @@ int write_single_block(struct sd_card *card,
 	uint32_t count;
 	uint32_t value;
 
-	count= 0;
+	count = 0;
 
 	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_BWR_ENABLE,
 			MMCHS_SD_IE_BWR_ENABLE_ENABLE);
@@ -619,11 +702,11 @@ int write_single_block(struct sd_card *card,
 	if (!(read32(MMCHS0_REG_BASE + MMCHS_SD_PSTATE) & MMCHS_SD_PSTATE_BWE_EN)) {
 		return 1; /* not ready to write data */
 	}
-	for (count= 0; count < 512; count+= 4) {
-		*((char*) &value)= buf[count];
-		*((char*) &value + 1)= buf[count + 1];
-		*((char*) &value + 2)= buf[count + 2];
-		*((char*) &value + 3)= buf[count + 3];
+	for (count = 0; count < 512; count += 4) {
+		*((char*) &value) = buf[count];
+		*((char*) &value + 1) = buf[count + 1];
+		*((char*) &value + 2) = buf[count + 2];
+		*((char*) &value + 3) = buf[count + 3];
 		write32(MMCHS0_REG_BASE + MMCHS_SD_DATA, value);
 	}
 
@@ -645,11 +728,10 @@ int main(void)
 {
 	struct sd_card card;
 	int i;
-	int j;
 
 	unsigned char buf[1024];
-	for (i= 0; i < 1024; i++) {
-		buf[i]= 0x0;
+	for (i = 0; i < 1024; i++) {
+		buf[i] = 0x0;
 	}
 
 	if (mmchs_init()) {
@@ -658,19 +740,19 @@ int main(void)
 	}
 
 	if (card_goto_idle_state()) {
-		printf("failed to go into idle state\n");
+		printf("Failed to go into idle state\n");
 		return 1;
 	}
 	if (card_identification()) {
-		printf("failed to go card_identification\n");
+		printf("Failed to go card_identification\n");
 		return 1;
 	}
 	if (card_query_voltage_and_type(&card)) {
-		printf("failed to go card_query_voltage_and_type\n");
+		printf("Failed to go card_query_voltage_and_type\n");
 		return 1;
 	}
 	if (card_identify(&card)) {
-		printf("failed to identify card\n");
+		printf("Failed to identify card\n");
 		return 1;
 	}
 	/* We have now initialized the hardware identified the card */
@@ -694,8 +776,8 @@ int main(void)
 		return 1;
 	}
 
-	for (i= 0; i < 512; i++) {
-		buf[i]= i % 256;
+	for (i = 0; i < 512; i++) {
+		buf[i] = i % 256;
 	}
 
 	if (read_single_block(&card, 0, buf)) {
@@ -710,9 +792,8 @@ int main(void)
 	}
 
 	/* DESCUCTIVE... */
-
-	for (i= 0; i < 512; i++) {
-		buf[i]= i % 256;
+	for (i = 0; i < 512; i++) {
+		buf[i] = i % 256;
 	}
 
 	if (write_single_block(&card, 0xfffff, buf)) {
@@ -720,8 +801,8 @@ int main(void)
 		return 1;
 	}
 
-	for (i= 0; i < 512; i++) {
-		buf[i]= 0;
+	for (i = 0; i < 512; i++) {
+		buf[i] = 0;
 	}
 
 	if (read_single_block(&card, 0xfffff, buf)) {
@@ -729,12 +810,12 @@ int main(void)
 		return 1;
 	}
 
-	for (i= 0; i < 512; i++) {
+	for (i = 0; i < 512; i++) {
 		if (!buf[i] == i % 256) {
 			printf("Failed to write a single block and read it again \n");
 			return 1;
 		}
 	}
-
+	printf("Finished\n");
 	return 0;
 }

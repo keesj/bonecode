@@ -140,4 +140,5 @@
 		<resource resourceType="PROJECT" workspacePath="/boneled"/>
 	</storageModule>
 	<storageModule moduleId="scannerConfiguration"/>
+	<storageModule moduleId="org.eclipse.cdt.internal.ui.text.commentOwnerProjectMappings"/>
 </cproject>
