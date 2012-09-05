@@ -4,7 +4,7 @@
  */
 #include <stdio.h>
 #include <inttypes.h>
-
+#include <string.h>
 #include <limits.h>
 #include <assert.h>
 
@@ -12,7 +12,14 @@
 #include "sdhcreg.h"
 #include "sd.h"
 
-#define MMCHS0_REG_BASE 0x48060000
+/* TODO: Rename to MMCH_0_REG_BASE and add the base address for the other items */
+#define MMCHS1_REG_BASE 0x48060000
+
+#ifdef AM_DM37x_Multimedia_Device
+#define MMCHS1_REG_BASE 0x4809C000
+#define MMCHS1_REG_BASE 0x480B4000
+#define MMCHS1_REG_BASE 0x480AD000
+#endif
 
 #define MMCHS_SD_SYSCONFIG 0x110 /* SD system configuration */
 #define MMCHS_SD_SYSSTATUS 0x114 /* SD system status */
@@ -49,7 +56,7 @@
 #define MMCHS_SD_SYSCONFIG_CLOCKACTIVITY_IF            (0x1 << 8)  /* Only Interface clock (functional can be switched off*/
 #define MMCHS_SD_SYSCONFIG_CLOCKACTIVITY_FUNC          (0x2 << 8)  /* Only Functional clock (interface clock can be switched off) */
 #define MMCHS_SD_SYSCONFIG_CLOCKACTIVITY_BOOTH         (0x3 << 8)  /* Booth the interface and functional clock are maintained */
-#define MMCHS_SD_SYSCONFIG_STANDBYMODE                 (0x3 << 12) /*Configuration for standby */
+#define MMCHS_SD_SYSCONFIG_STANDBYMODE                 (0x3 << 12) /* Configuration for standby */
 #define MMCHS_SD_SYSCONFIG_STANDBYMODE_FORCE_STANDBY   (0x0 << 12) /* Force standby mode upon idle request*/
 #define MMCHS_SD_SYSCONFIG_STANDBYMODE_NO_STANDBY      (0x1 << 12) /* Never go into standby mode */
 #define MMCHS_SD_SYSCONFIG_STANDBYMODE_WAKEUP_INTERNAL (0x2 << 12) /* Go into wake-up mode based on internal knowledge */
@@ -70,23 +77,6 @@
 
 #define MMCHS_SD_CMD_INDX                 (0x3f << 24) /* Command index */
 #define MMCHS_SD_CMD_INDX_CMD(x)          (x << 24)    /* MMC command index binary encoded values from 0 to 63 */
-
-#if 0
-#define MMCHS_SD_CMD_CMD0 MMCHS_SD_CMD_INDX_CMD(0)     /* GO_IDLE_STATE */
-#define MMCHS_SD_CMD_CMD2 MMCHS_SD_CMD_INDX_CMD(2)     /* ALL_SEND_CID */
-#define MMCHS_SD_CMD_CMD3 MMCHS_SD_CMD_INDX_CMD(3)     /* SEND_RELATIVE_ADDR */
-#define MMCHS_SD_CMD_CMD7 MMCHS_SD_CMD_INDX_CMD(7)     /* (D)SELECT_CARD */
-#define MMCHS_SD_CMD_CMD8 MMCHS_SD_CMD_INDX_CMD(8)     /* SEND_IF_COND */
-#define MMCHS_SD_CMD_CMD9 MMCHS_SD_CMD_INDX_CMD(9)     /* SEND_CSD */
-#define MMCHS_SD_CMD_CMD55 MMCHS_SD_CMD_INDX_CMD(55)     /* Next command is application specific */
-#endif
-
-#define MMCHS_SD_CMD_CMD17 MMCHS_SD_CMD_INDX_CMD(17)     /* READ_SINGLE_BLOCK */
-#define MMCHS_SD_CMD_CMD24 MMCHS_SD_CMD_INDX_CMD(24)     /* WRITE_SINGLE_BLOCK */
-
-
-#define MMCHS_SD_CMD_ACMD41 MMCHS_SD_CMD_INDX_CMD(41)     /*Send host capacity support */
-#define SD_SEND_OP_COND MMCHS_SD_CMD_ACMD41               /* alias for ACMD41 */
 
 #define MMCHS_SD_ARG_MASK                 (0xffffffffu)      /* Mask everything */
 #define MMCHS_SD_ARG_CMD8_VHS             (0x1 << (16 - 8))  /* Voltage between 2.7 and 3.6 v*/
@@ -233,21 +223,25 @@ inline void set32(uint32_t address, uint32_t mask, uint32_t value)
 	write32(address, val);
 }
 
-int mmchs_init()
+static uint32_t base_address;
+
+int mmchs_init(uint32_t instance)
 {
 
 	int counter;
 	counter = 0;
 
+	/* Set the base address to use */
+	base_address = MMCHS1_REG_BASE;
 	/*
 	 * Soft reset of the controller
 	 */
 	/* Write 1 to sysconfig[0] to trigger a reset*/
-	set32(MMCHS0_REG_BASE + MMCHS_SD_SYSCONFIG, MMCHS_SD_SYSCONFIG_SOFTRESET,
+	set32(base_address + MMCHS_SD_SYSCONFIG, MMCHS_SD_SYSCONFIG_SOFTRESET,
 			MMCHS_SD_SYSCONFIG_SOFTRESET);
 
 	/* read sysstatus to know it's done */
-	while (!(read32(MMCHS0_REG_BASE + MMCHS_SD_SYSSTATUS)
+	while (!(read32(base_address + MMCHS_SD_SYSSTATUS)
 			& MMCHS_SD_SYSSTATUS_RESETDONE)) {
 		counter++;
 	}
@@ -255,14 +249,14 @@ int mmchs_init()
 	/*
 	 * Set SD default capabilities
 	 */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_CAPA, MMCHS_SD_CAPA_VS_MASK,
+	set32(base_address + MMCHS_SD_CAPA, MMCHS_SD_CAPA_VS_MASK,
 			MMCHS_SD_CAPA_VS18 | MMCHS_SD_CAPA_VS30);
 
 	/*
 	 * wake-up configuration
 	 */
 	set32(
-			MMCHS0_REG_BASE + MMCHS_SD_SYSCONFIG,
+			base_address + MMCHS_SD_SYSCONFIG,
 			MMCHS_SD_SYSCONFIG_AUTOIDLE | MMCHS_SD_SYSCONFIG_ENAWAKEUP
 					| MMCHS_SD_SYSCONFIG_STANDBYMODE
 					| MMCHS_SD_SYSCONFIG_CLOCKACTIVITY
@@ -275,7 +269,7 @@ int mmchs_init()
 			);
 
 	/* Wake-up on sd interrupt SDIO */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_HCTL, MMCHS_SD_HCTL_IWE,
+	set32(base_address + MMCHS_SD_HCTL, MMCHS_SD_HCTL_IWE,
 			MMCHS_SD_HCTL_IWE_EN);
 
 	/*
@@ -283,35 +277,35 @@ int mmchs_init()
 	 */
 
 	/* Configure data and command transfer (1 bit mode)*/
-	set32(MMCHS0_REG_BASE + MMCHS_SD_CON, MMCHS_SD_CON_DW8,
+	set32(base_address + MMCHS_SD_CON, MMCHS_SD_CON_DW8,
 			MMCHS_SD_CON_DW8_1BIT);
-	set32(MMCHS0_REG_BASE + MMCHS_SD_HCTL, MMCHS_SD_HCTL_DTW,
+	set32(base_address + MMCHS_SD_HCTL, MMCHS_SD_HCTL_DTW,
 			MMCHS_SD_HCTL_DTW_1BIT);
 
 	/* Configure card voltage  */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_HCTL, MMCHS_SD_HCTL_SDVS,
+	set32(base_address + MMCHS_SD_HCTL, MMCHS_SD_HCTL_SDVS,
 			MMCHS_SD_HCTL_SDVS_VS30 /* Configure 3.0 volt */
 			);
 
 	/* Power on the host controller and wait for the  MMCHS_SD_HCTL_SDBP_POWER_ON to be set */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_HCTL, MMCHS_SD_HCTL_SDBP,
+	set32(base_address + MMCHS_SD_HCTL, MMCHS_SD_HCTL_SDBP,
 			MMCHS_SD_HCTL_SDBP_ON);
 
-	while ((read32(MMCHS0_REG_BASE + MMCHS_SD_HCTL) & MMCHS_SD_HCTL_SDBP)
+	while ((read32(base_address + MMCHS_SD_HCTL) & MMCHS_SD_HCTL_SDBP)
 			!= MMCHS_SD_HCTL_SDBP_ON) {
 		counter++;
 	}
 
 	/* Enable internal clock and clock to the card*/
-	set32(MMCHS0_REG_BASE + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_ICE,
+	set32(base_address + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_ICE,
 			MMCHS_SD_SYSCTL_ICE_EN);
 
 	//@TODO Fix external clock enable , this one is very slow
-	set32(MMCHS0_REG_BASE + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_CLKD,
+	set32(base_address + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_CLKD,
 			(0x3ff << 6));
-	set32(MMCHS0_REG_BASE + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_CEN,
+	set32(base_address + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_CEN,
 			MMCHS_SD_SYSCTL_CEN_EN);
-	while ((read32(MMCHS0_REG_BASE + MMCHS_SD_SYSCTL) & MMCHS_SD_SYSCTL_ICS)
+	while ((read32(base_address + MMCHS_SD_SYSCTL) & MMCHS_SD_SYSCTL_ICS)
 			!= MMCHS_SD_SYSCTL_ICS_STABLE)
 		;
 
@@ -320,76 +314,76 @@ int mmchs_init()
 	 */
 
 	/* enable command interrupt */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_CC_ENABLE,
+	set32(base_address + MMCHS_SD_IE, MMCHS_SD_IE_CC_ENABLE,
 			MMCHS_SD_IE_CC_ENABLE_ENABLE);
 	/* enable transfer complete interrupt */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_TC_ENABLE,
+	set32(base_address + MMCHS_SD_IE, MMCHS_SD_IE_TC_ENABLE,
 			MMCHS_SD_IE_TC_ENABLE_ENABLE);
 
 	/* enable error interrupts */
 	/* NOTE: We are currently skipping the BADA interrupt it does get raised for unknown reasons */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_ERROR_MASK, 0x0fffffffu);
-	//set32(MMCHS0_REG_BASE + MMCHS_SD_IE,MMCHS_SD_IE_ERROR_MASK, 0xffffffffu);
+	set32(base_address + MMCHS_SD_IE, MMCHS_SD_IE_ERROR_MASK, 0x0fffffffu);
+	//set32(base_address + MMCHS_SD_IE,MMCHS_SD_IE_ERROR_MASK, 0xffffffffu);
 
 	/* clean the error interrupts */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_STAT_ERROR_MASK,
+	set32(base_address + MMCHS_SD_STAT, MMCHS_SD_STAT_ERROR_MASK,
 			0xffffffffu); // clear errors
-	//set32(MMCHS0_REG_BASE + MMCHS_SD_STAT,MMCHS_SD_STAT_ERROR_MASK, 0xffffffffu);// clear errors
+	//set32(base_address + MMCHS_SD_STAT,MMCHS_SD_STAT_ERROR_MASK, 0xffffffffu);// clear errors
 
 	/* send a init signal to the host controller. This does not actually
 	 * send a command to a card manner
 	 */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_CON, MMCHS_SD_CON_INIT,
+	set32(base_address + MMCHS_SD_CON, MMCHS_SD_CON_INIT,
 			MMCHS_SD_CON_INIT_INIT);
-	write32(MMCHS0_REG_BASE + MMCHS_SD_CMD, 0x00); /* command 0 , type other commands , not response etc) */
+	write32(base_address + MMCHS_SD_CMD, 0x00); /* command 0 , type other commands , not response etc) */
 
-	while ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT) & MMCHS_SD_STAT_CC)
+	while ((read32(base_address + MMCHS_SD_STAT) & MMCHS_SD_STAT_CC)
 			!= MMCHS_SD_STAT_CC_RAISED) {
-		if (read32(MMCHS0_REG_BASE + MMCHS_SD_STAT) & 0x8000) {
+		if (read32(base_address + MMCHS_SD_STAT) & 0x8000) {
 			printf("%s, error stat  %x\n", __FUNCTION__,
-					read32(MMCHS0_REG_BASE + MMCHS_SD_STAT));
+					read32(base_address + MMCHS_SD_STAT));
 			return 1;
 		}
 		counter++;
 	}
 
 	/* clear the cc interrupt status */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_IE_CC_ENABLE,
+	set32(base_address + MMCHS_SD_STAT, MMCHS_SD_IE_CC_ENABLE,
 			MMCHS_SD_IE_CC_ENABLE_ENABLE);
 
 	/*
 	 * Set Set SD_CON[1] INIT bit to 0x0 to end the initialization sequence
 	 */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_CON, MMCHS_SD_CON_INIT,
+	set32(base_address + MMCHS_SD_CON, MMCHS_SD_CON_INIT,
 			MMCHS_SD_CON_INIT_NOINIT);
 	return 0;
 }
 
-int send_cmd(uint32_t command, uint32_t arg)
+int mmchs_send_cmd(uint32_t command, uint32_t arg)
 {
 	int count = 0;
 
 	/* Read current interrupt status and fail it an interrupt is already asserted */
-	if ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT) & 0xffffu)) {
+	if ((read32(base_address + MMCHS_SD_STAT) & 0xffffu)) {
 		printf("%s, interrupt already raised stat  %08x\n", __FUNCTION__,
-				read32(MMCHS0_REG_BASE + MMCHS_SD_STAT));
+				read32(base_address + MMCHS_SD_STAT));
 		return 1;
 	}
 
 	/* Set arguments */
-	write32(MMCHS0_REG_BASE + MMCHS_SD_ARG, arg);
+	write32(base_address + MMCHS_SD_ARG, arg);
 	/* Set command */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_CMD, MMCHS_SD_CMD_MASK, command);
+	set32(base_address + MMCHS_SD_CMD, MMCHS_SD_CMD_MASK, command);
 
 	/* Wait for completion */
-	while ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT) & 0xffffu) == 0x0) {
+	while ((read32(base_address + MMCHS_SD_STAT) & 0xffffu) == 0x0) {
 		count++;
 	}
 
-	if (read32(MMCHS0_REG_BASE + MMCHS_SD_STAT) & 0x8000) {
+	if (read32(base_address + MMCHS_SD_STAT) & 0x8000) {
 		printf("%s, error stat  %08x\n", __FUNCTION__,
-				read32(MMCHS0_REG_BASE + MMCHS_SD_STAT));
-		set32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_STAT_ERROR_MASK,
+				read32(base_address + MMCHS_SD_STAT));
+		set32(base_address + MMCHS_SD_STAT, MMCHS_SD_STAT_ERROR_MASK,
 				0xffffffffu);	// clear errors
 		// We currently only support 2.0, not responding to
 		return 1;
@@ -397,21 +391,21 @@ int send_cmd(uint32_t command, uint32_t arg)
 
 	if ((command & MMCHS_SD_CMD_RSP_TYPE) == MMCHS_SD_CMD_RSP_TYPE_48B_BUSY) {
 		/*
-		 * Command with busy repsonse *CAN* also set the TC bit if they exit busy
+		 * Command with busy response *CAN* also set the TC bit if they exit busy
 		 */
-		while ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT)
+		while ((read32(base_address + MMCHS_SD_STAT)
 				& MMCHS_SD_IE_TC_ENABLE_ENABLE) == 0) {
 			count++;
 		}
-		write32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_IE_TC_ENABLE_CLEAR);
+		write32(base_address + MMCHS_SD_STAT, MMCHS_SD_IE_TC_ENABLE_CLEAR);
 	}
 
 	/* clear the cc status */
-	write32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_IE_CC_ENABLE_CLEAR);
+	write32(base_address + MMCHS_SD_STAT, MMCHS_SD_IE_CC_ENABLE_CLEAR);
 	return 0;
 }
 
-int send_cmd_new(struct mmc_command *c)
+int mmc_send_cmd(struct mmc_command *c)
 {
 
 	/* convert the command to a hsmmc command */
@@ -437,26 +431,28 @@ int send_cmd_new(struct mmc_command *c)
 			return 1;
 	}
 
-	ret = send_cmd(cmd, arg);
+	ret = mmchs_send_cmd(cmd, arg);
 
 	/* copy response into cmd->resp we don't really
-	 * care at this stage about the response lenght
-	 * or if there was a response at all
+	 * care at this stage about the response length
+	 * and copy everything. We also put the value in the array
+	 * in such a way that it mimics a memory mapped register
 	 */
-	c->resp[3] = read32(MMCHS0_REG_BASE + MMCHS_SD_RSP10);
-	c->resp[2] = read32(MMCHS0_REG_BASE + MMCHS_SD_RSP32);
-	c->resp[1] = read32(MMCHS0_REG_BASE + MMCHS_SD_RSP54);
-	c->resp[0] = read32(MMCHS0_REG_BASE + MMCHS_SD_RSP76);
+	c->resp[3] = read32(base_address + MMCHS_SD_RSP10);
+	c->resp[2] = read32(base_address + MMCHS_SD_RSP32);
+	c->resp[1] = read32(base_address + MMCHS_SD_RSP54);
+	c->resp[0] = read32(base_address + MMCHS_SD_RSP76);
 	return ret;
 }
 
 static struct mmc_command command;
+
 int card_goto_idle_state()
 {
 	command.cmd = MMC_GO_IDLE_STATE;
 	command.resp_type = NO_RESPONSE;
 	command.args = 0x00;
-	if (send_cmd_new(&command)) {
+	if (mmc_send_cmd(&command)) {
 		// Failure
 		return 1;
 	}
@@ -469,7 +465,7 @@ int card_identification()
 	command.resp_type = RESP_LEN_48;
 	command.args = MMCHS_SD_ARG_CMD8_VHS | MMCHS_SD_ARG_CMD8_CHECK_PATTERN;
 
-	if (send_cmd_new(&command)) {
+	if (mmc_send_cmd(&command)) {
 		// We currently only support 2.0,
 		return 1;
 	}
@@ -479,7 +475,6 @@ int card_identification()
 		printf("%s, check pattern check failed  %x\n", __FUNCTION__);
 		return 1;
 	}
-
 	return 0;
 }
 
@@ -489,7 +484,7 @@ int card_query_voltage_and_type(struct sd_card * card)
 	command.cmd = MMC_APP_CMD;
 	command.resp_type = RESP_LEN_48;
 	command.args = 0x0; /* RCA=0000 */
-	if (send_cmd_new(&command)) {
+	if (mmc_send_cmd(&command)) {
 		return 1;
 	}
 
@@ -498,7 +493,7 @@ int card_query_voltage_and_type(struct sd_card * card)
 
 	/* 0x1 << 30 == send HCS (Host capacity support) and get OCR register */
 	command.args = (0x3F << 15) | (0x1 << 30); /* RCA=0000 */
-	if (send_cmd_new(&command)) {
+	if (mmc_send_cmd(&command)) {
 		return 1;
 	}
 
@@ -506,10 +501,9 @@ int card_query_voltage_and_type(struct sd_card * card)
 		command.cmd = MMC_APP_CMD;
 		command.resp_type = RESP_LEN_48;
 		command.args = 0x0; /* RCA=0000 */
-		if (send_cmd_new(&command)) {
+		if (mmc_send_cmd(&command)) {
 			return 1;
 		}
-
 
 		/* Send ADMD41 */
 		/* 0x1 << 30 == send HCS (Host capacity support) and get OCR register */
@@ -517,7 +511,7 @@ int card_query_voltage_and_type(struct sd_card * card)
 		command.resp_type = RESP_LEN_48;
 		/* 0x1 << 30 == send HCS (Host capacity support) */
 		command.args = (0x1FF << 15) | (0x1 << 30);
-		if (send_cmd_new(&command)) {
+		if (mmc_send_cmd(&command)) {
 			return 1;
 		}
 
@@ -539,7 +533,7 @@ int card_identify(struct sd_card * card)
 	command.resp_type = RESP_LEN_136;
 	command.args = 0x0; /* RCA=0000 */
 
-	if (send_cmd_new(&command)) {
+	if (mmc_send_cmd(&command)) {
 		return 1;
 	}
 
@@ -548,13 +542,12 @@ int card_identify(struct sd_card * card)
 	card->cid[2] = command.resp[1];
 	card->cid[3] = command.resp[0];
 
-
 	command.cmd = MMC_SET_RELATIVE_ADDR;
 	command.resp_type = RESP_LEN_48;
 	command.args = 0x0; /* RCA=0000 */
 
 	/* R6 response */
-	if (send_cmd_new(&command)) {
+	if (mmc_send_cmd(&command)) {
 		return 1;
 	}
 
@@ -572,9 +565,9 @@ int card_csd(struct sd_card *card)
 	/* send_csd -> r2 response */
 	command.cmd = MMC_SEND_CSD;
 	command.resp_type = RESP_LEN_136;
-	command.args =(card->rca << 16); /* card rca */
+	command.args = MMC_ARG_RCA(card->rca); /* card rca */
 
-	if (send_cmd_new(&command)) {
+	if (mmc_send_cmd(&command)) {
 		return 1;
 	}
 
@@ -598,18 +591,12 @@ int select_card(struct sd_card *card)
 
 	command.cmd = MMC_SELECT_CARD;
 	command.resp_type = RESP_LEN_48_CHK_BUSY;
-	command.args =(card->rca << 16); /* card rca */
+	command.args = MMC_ARG_RCA(card->rca); /* card rca */
 
-	if (send_cmd_new(&command)) {
+	if (mmc_send_cmd(&command)) {
 		return 1;
 	}
-#if 0
-	/* select card */
-	if (send_cmd(MMCHS_SD_CMD_CMD7 | MMCHS_SD_CMD_RSP_TYPE_48B_BUSY,
-			(card->rca << 16))) {
-		return 1;
-	}
-#endif
+
 	return 0;
 }
 
@@ -620,12 +607,13 @@ int read_single_block(struct sd_card *card, uint32_t blknr, unsigned char * buf)
 
 	count = 0;
 
-	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_BRR_ENABLE,
+	set32(base_address + MMCHS_SD_IE, MMCHS_SD_IE_BRR_ENABLE,
 			MMCHS_SD_IE_BRR_ENABLE_ENABLE);
 
-	set32(MMCHS0_REG_BASE + MMCHS_SD_BLK, MMCHS_SD_BLK_BLEN, 512);
+	set32(base_address + MMCHS_SD_BLK, MMCHS_SD_BLK_BLEN, 512);
 
-	if (send_cmd(MMCHS_SD_CMD_CMD17 /* read single block */
+
+	if (mmchs_send_cmd(MMCHS_SD_CMD_INDX_CMD(MMC_READ_BLOCK_SINGLE) /* read single block */
 	| MMCHS_SD_CMD_DP_DATA /* Command with data transfer */
 	| MMCHS_SD_CMD_RSP_TYPE_48B /* type (R1) */
 	| MMCHS_SD_CMD_MSBS_SINGLE /* single block */
@@ -634,17 +622,17 @@ int read_single_block(struct sd_card *card, uint32_t blknr, unsigned char * buf)
 		return 1;
 	}
 
-	while ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT)
+	while ((read32(base_address + MMCHS_SD_STAT)
 			& MMCHS_SD_IE_BRR_ENABLE_ENABLE) == 0) {
 		count++;
 	}
 
-	if (!(read32(MMCHS0_REG_BASE + MMCHS_SD_PSTATE) & MMCHS_SD_PSTATE_BRE_EN)) {
+	if (!(read32(base_address + MMCHS_SD_PSTATE) & MMCHS_SD_PSTATE_BRE_EN)) {
 		return 1; /* We are not allowed to read data from the data buffer */
 	}
 
 	for (count = 0; count < 512; count += 4) {
-		value = read32(MMCHS0_REG_BASE + MMCHS_SD_DATA);
+		value = read32(base_address + MMCHS_SD_DATA);
 		buf[count] = *((char*) &value);
 		buf[count + 1] = *((char*) &value + 1);
 		buf[count + 2] = *((char*) &value + 2);
@@ -653,15 +641,15 @@ int read_single_block(struct sd_card *card, uint32_t blknr, unsigned char * buf)
 
 	/* Wait for TC */
 
-	while ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT)
+	while ((read32(base_address + MMCHS_SD_STAT)
 			& MMCHS_SD_IE_TC_ENABLE_ENABLE) == 0) {
 		count++;
 	}
-	write32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_IE_TC_ENABLE_CLEAR);
+	write32(base_address + MMCHS_SD_STAT, MMCHS_SD_IE_TC_ENABLE_CLEAR);
 
 	/* clear and disable the bbr interrupt */
-	write32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_IE_BRR_ENABLE_CLEAR);
-	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_BRR_ENABLE,
+	write32(base_address + MMCHS_SD_STAT, MMCHS_SD_IE_BRR_ENABLE_CLEAR);
+	set32(base_address + MMCHS_SD_IE, MMCHS_SD_IE_BRR_ENABLE,
 			MMCHS_SD_IE_BRR_ENABLE_DISABLE);
 	return 0;
 }
@@ -675,16 +663,16 @@ int write_single_block(struct sd_card *card,
 
 	count = 0;
 
-	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_BWR_ENABLE,
+	set32(base_address + MMCHS_SD_IE, MMCHS_SD_IE_BWR_ENABLE,
 			MMCHS_SD_IE_BWR_ENABLE_ENABLE);
-	//set32(MMCHS0_REG_BASE + MMCHS_SD_IE, 0xfff , 0xfff);
-	set32(MMCHS0_REG_BASE + MMCHS_SD_BLK, MMCHS_SD_BLK_BLEN, 512);
+	//set32(base_address + MMCHS_SD_IE, 0xfff , 0xfff);
+	set32(base_address + MMCHS_SD_BLK, MMCHS_SD_BLK_BLEN, 512);
 
 	/* Set timeout */
-	set32(MMCHS0_REG_BASE + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_DTO,
+	set32(base_address + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_DTO,
 			MMCHS_SD_SYSCTL_DTO_2POW27);
 
-	if (send_cmd(MMCHS_SD_CMD_CMD24 /* write single block */
+	if (mmchs_send_cmd(MMCHS_SD_CMD_INDX_CMD(MMC_WRITE_BLOCK_SINGLE) /* write single block */
 	| MMCHS_SD_CMD_DP_DATA /* Command with data transfer */
 	| MMCHS_SD_CMD_RSP_TYPE_48B /* type (R1b) */
 	| MMCHS_SD_CMD_MSBS_SINGLE /* single block */
@@ -694,12 +682,12 @@ int write_single_block(struct sd_card *card,
 	}
 
 	/* Wait for the MMCHS_SD_IE_BWR_ENABLE interrupt */
-	while ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT) & MMCHS_SD_IE_BWR_ENABLE)
+	while ((read32(base_address + MMCHS_SD_STAT) & MMCHS_SD_IE_BWR_ENABLE)
 			== 0) {
 		count++;
 	}
 
-	if (!(read32(MMCHS0_REG_BASE + MMCHS_SD_PSTATE) & MMCHS_SD_PSTATE_BWE_EN)) {
+	if (!(read32(base_address + MMCHS_SD_PSTATE) & MMCHS_SD_PSTATE_BWE_EN)) {
 		return 1; /* not ready to write data */
 	}
 	for (count = 0; count < 512; count += 4) {
@@ -707,19 +695,19 @@ int write_single_block(struct sd_card *card,
 		*((char*) &value + 1) = buf[count + 1];
 		*((char*) &value + 2) = buf[count + 2];
 		*((char*) &value + 3) = buf[count + 3];
-		write32(MMCHS0_REG_BASE + MMCHS_SD_DATA, value);
+		write32(base_address + MMCHS_SD_DATA, value);
 	}
 
 	/* Wait for TC */
-	while ((read32(MMCHS0_REG_BASE + MMCHS_SD_STAT)
+	while ((read32(base_address + MMCHS_SD_STAT)
 			& MMCHS_SD_IE_TC_ENABLE_ENABLE) == 0) {
 		count++;
 	}
-	write32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_IE_TC_ENABLE_CLEAR);
-	write32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_IE_CC_ENABLE_CLEAR);/* finished.  */
+	write32(base_address + MMCHS_SD_STAT, MMCHS_SD_IE_TC_ENABLE_CLEAR);
+	write32(base_address + MMCHS_SD_STAT, MMCHS_SD_IE_CC_ENABLE_CLEAR);/* finished.  */
 	/* clear the bwr interrupt FIXME is this right when writing?*/
-	write32(MMCHS0_REG_BASE + MMCHS_SD_STAT, MMCHS_SD_IE_BWR_ENABLE_CLEAR);
-	set32(MMCHS0_REG_BASE + MMCHS_SD_IE, MMCHS_SD_IE_BWR_ENABLE,
+	write32(base_address + MMCHS_SD_STAT, MMCHS_SD_IE_BWR_ENABLE_CLEAR);
+	set32(base_address + MMCHS_SD_IE, MMCHS_SD_IE_BWR_ENABLE,
 			MMCHS_SD_IE_BWR_ENABLE_DISABLE);
 	return 0;
 }
@@ -730,11 +718,9 @@ int main(void)
 	int i;
 
 	unsigned char buf[1024];
-	for (i = 0; i < 1024; i++) {
-		buf[i] = 0x0;
-	}
+	memset(buf, 0, 1024);
 
-	if (mmchs_init()) {
+	if (mmchs_init(1)) {
 		printf("Failed to initialize the host controller\n");
 		return 1;
 	}
