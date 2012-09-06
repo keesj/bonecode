@@ -225,6 +225,11 @@ inline void set32(uint32_t address, uint32_t mask, uint32_t value)
 
 static uint32_t base_address;
 
+/**
+ * Initialize the MMC controller given a certain
+ * instance. this driver only handles a single
+ * mmchs controller at a given time.
+ */
 int mmchs_init(uint32_t instance)
 {
 
@@ -233,16 +238,19 @@ int mmchs_init(uint32_t instance)
 
 	/* Set the base address to use */
 	base_address = MMCHS1_REG_BASE;
+
 	/*
-	 * Soft reset of the controller
+	 * Soft reset of the controller. This section is documented in the TRM
 	 */
+
 	/* Write 1 to sysconfig[0] to trigger a reset*/
 	set32(base_address + MMCHS_SD_SYSCONFIG, MMCHS_SD_SYSCONFIG_SOFTRESET,
 			MMCHS_SD_SYSCONFIG_SOFTRESET);
 
-	/* read sysstatus to know it's done */
+	/* read sysstatus to know when it's done */
 	while (!(read32(base_address + MMCHS_SD_SYSSTATUS)
 			& MMCHS_SD_SYSSTATUS_RESETDONE)) {
+		/* TODO:Add proper delay and escape route */
 		counter++;
 	}
 
@@ -268,7 +276,7 @@ int mmchs_init(uint32_t instance)
 			| MMCHS_SD_SYSCONFIG_STANDBYMODE_WAKEUP_INTERNAL /* Go info wake-up mode when possible */
 			);
 
-	/* Wake-up on sd interrupt SDIO */
+	/* Wake-up on sd interrupt for SDIO */
 	set32(base_address + MMCHS_SD_HCTL, MMCHS_SD_HCTL_IWE,
 			MMCHS_SD_HCTL_IWE_EN);
 
@@ -293,6 +301,7 @@ int mmchs_init(uint32_t instance)
 
 	while ((read32(base_address + MMCHS_SD_HCTL) & MMCHS_SD_HCTL_SDBP)
 			!= MMCHS_SD_HCTL_SDBP_ON) {
+		/* TODO:Add proper delay and escape route */
 		counter++;
 	}
 
@@ -306,8 +315,10 @@ int mmchs_init(uint32_t instance)
 	set32(base_address + MMCHS_SD_SYSCTL, MMCHS_SD_SYSCTL_CEN,
 			MMCHS_SD_SYSCTL_CEN_EN);
 	while ((read32(base_address + MMCHS_SD_SYSCTL) & MMCHS_SD_SYSCTL_ICS)
-			!= MMCHS_SD_SYSCTL_ICS_STABLE)
-		;
+			!= MMCHS_SD_SYSCTL_ICS_STABLE){
+		/* TODO:Add proper delay and escape route */
+		counter++;
+	}
 
 	/*
 	 * See spruh73e page 3576  Card Detection, Identification, and Selection
