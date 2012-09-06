@@ -7,7 +7,7 @@
         b main
 .equ    UART_BASE, 	0x44e09000    @define a constant that point to the UART register
 str:    .asciz "Hello ARM\n\r"    @create a label that points to a 0 terminated string
-		.align
+	.align
 main:                             @define the main label where we want the program to start
                                   @at the start of the program we already jump to this main
                                   @function but code composer studio will start the execution
