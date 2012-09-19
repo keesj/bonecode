@@ -29,8 +29,6 @@ U-Boot# fatload mmc 0:1 0x40300000 main.bin
 reading main.bin
 
 56 bytes read
-U-Boot# jk
-Unknown command 'jk' - try 'help'
 U-Boot# go 0x40300010
 ## Starting application at 0x40300010 ...
 Hello ARM
