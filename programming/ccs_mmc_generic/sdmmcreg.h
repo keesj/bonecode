@@ -316,7 +316,12 @@
 	be16toh(__bitfield((uint32_t *)(status), (7 - (group)) << 4, 16))
 
 /* Might be slow, but it should work on big and little endian systems. */
-#define MMC_RSP_BITS(resp, start, len)	__bitfield((resp), (start)-8, (len))
+
+
+/* The macro used to do a (start)-8 to work around a bug in hardware see sdhc.c
+ * of the openbsd mmc code driver.
+ */
+#define MMC_RSP_BITS(resp, start, len)	__bitfield((resp), (start), (len))
 static inline int
 __bitfield(uint32_t *src, int start, int len)
 {
