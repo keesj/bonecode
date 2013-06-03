@@ -1,0 +1,188 @@
+#!/usr/bin/expect
+#
+# boot am335x over serial.
+#
+# we assume:
+# *picocom and sz are already present on the local 
+# file system.
+#
+# Depend on picocom and expect being installed
+
+set serial_dev "/dev/ttyUSB0"
+set spl_bin_file "spl/u-boot-spl.bin"
+set uboot_img_file "u-boot.img"
+
+#
+# Parse command line arguments
+# --serial serial_dev
+# --spl_bin_file file.bin
+# --uboot_img_file u-boot.img
+#
+if { $argc > 0 } {
+	set counter 0
+	while {$counter < $argc} {
+		if { [lindex $argv $counter] == "--serial" }  {
+			set counter [expr {$counter +1}]
+			set serial_dev [lindex $argv $counter]
+			
+		}
+		if { [lindex $argv $counter] == "--spl_bin_file" }  {
+			set counter [expr {$counter +1}]
+			set spl_bin_file [lindex $argv $counter]
+			
+		}
+		if { [lindex $argv $counter] == "--uboot_img_file" }  {
+			set counter [expr {$counter +1}]
+			set uboot_img_file [lindex $argv $counter]
+			
+		}
+		set counter [expr {$counter +1}]
+	}
+}
+
+puts "serial: $serial_dev, spl_bin_file: $spl_bin_file, uboot_img_file: $uboot_img_file\n"
+
+#
+# start picocom at 115200 baud rate and tell it to use 
+# "sx" as program to send files across
+#
+spawn picocom -b 115200 $serial_dev -s sx
+
+#
+# First wait for picocom to be ready
+#
+set timeout 10
+expect {
+        "Terminal ready" {}
+	timeout {
+		puts "\npicocom timeout\n"
+		exit 1
+	}
+}
+
+expect {
+	"CC" {}
+	timeout {
+		puts "\ndevice not in serial flashing mode\n"
+		exit 1
+	}
+}
+
+#
+# Send control-a control-s to picocom. This is the way to upload files
+# when using picocom 
+# the sequence bellow was that represents control-a control-s was 
+# determined by doing running od -c as described here:
+#
+#   http://expect.sourceforge.net/FAQ.html#q54
+#
+
+
+send "\001\023" 
+
+#
+# Once picocom recieves the control chars it requests input from
+# the user by prompting him to enter a file
+#
+expect {
+	"*** file:"
+}
+
+#
+# We a going to enter the file name and let picocom launch sz to
+# perform the upload over ymodem.
+#
+# We expected to be able to send "\n" here but this is not the case.
+# Checking the source code of picocom (apt-get source picocom )
+# revealed we needed to send \r
+#
+set timeout 10
+send  "$spl_bin_file\r"
+for {} 1 {} { 
+	expect {
+		"Transfer complete" {
+			break
+		}
+		"Xmodem sectors" {}
+		timeout {
+			puts "\nfailed while uploading spl\n"
+			exit 1
+		}
+	}
+}
+
+expect {
+	"CC" {}
+	timeout {
+		puts "\nFailed while waiting for the u-boot upload prompt\n"
+		exit 1
+	}
+}
+
+# send contol a control x to exit the process
+send "\001\030"
+set timeout 5
+expect {
+	eof {}
+       timeout {
+		puts "failed to stop the control serial\n"
+		exit 1
+	}
+}
+
+
+#
+# start picocom at 115200 baud rate
+#
+spawn picocom -b 115200 $serial_dev 
+#
+# First wait for picocom to be ready
+#
+set timeout 10
+expect {
+        "Terminal ready" {}
+	timeout {
+		puts "\npicocom timeout\n"
+		exit 1
+	}
+}
+
+expect {
+	"C" {}
+	timeout {
+		puts "\n not in serial flashing mode\n"
+		exit 1
+	}
+}
+
+send "\001\023" 
+
+#
+# Once picocom recieves the control chars it requests input from
+# the user by prompting him to enter a file
+#
+expect {
+	"*** file:"
+}
+
+set timeout 10
+send  "$uboot_img_file\r"
+for {} 1 {} { 
+	expect {
+		"Transfer complete" {
+			break
+		}
+		"Ymodem sectors" {}
+		timeout {
+			puts "\nfailed while uploading spl\n"
+			exit 1
+		}
+	}
+}
+
+#
+# now just let the use interact over the serial
+#
+#
+puts "\n u-boot loaded \n"
+interact
